@@ -7,6 +7,7 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
+// Verificación del estado de la API
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     ok: true,
@@ -15,6 +16,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Obtener los tipos de financiamiento disponibles
 app.get('/api/financiamientos', (req, res) => {
   res.status(200).json({
     ok: true,
@@ -42,6 +44,6 @@ app.get('/api/financiamientos', (req, res) => {
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`FinanSmart API ejecutándose en http://localhost:${PORT}`);
 });
