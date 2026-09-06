@@ -1,14 +1,23 @@
 import 'package:flutter/material.dart';
 
+import 'database/app_database.dart';
 import 'screens/financiamientos_screen.dart';
+import 'screens/mis_solicitudes_screen.dart'
+    as offline_solicitudes;
+import 'screens/nueva_solicitud_screen.dart'
+    as offline_nueva;
+import 'services/secure_storage_service.dart';
+import 'services/sync_service.dart';
 import 'theme/app_theme.dart';
 
-void main() {
-  runApp(const FinanSmartApp());
-}
+final AppDatabase appDatabase = AppDatabase();
+
+final SyncService syncService = SyncService(
+  database: appDatabase,
+);
 
 // ============================================================
-// DATOS TEMPORALES DE LA APLICACIÓN
+// DATOS TEMPORALES DEL USUARIO DE PRUEBA
 // ============================================================
 
 String usuarioNombre = 'Usuario FinanSmart';
@@ -16,15 +25,43 @@ String usuarioCorreo = 'usuario@finansmart.com';
 String usuarioTelefono = '0999999999';
 String usuarioClave = '123456';
 
-final List<Map<String, dynamic>> solicitudes = [];
+// ============================================================
+// INICIO DE LA APLICACIÓN
+// ============================================================
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final tieneSesion =
+      await SecureStorageService.hasSession();
+
+  final nombreGuardado =
+      await SecureStorageService.getUserName();
+
+  if (nombreGuardado != null &&
+      nombreGuardado.isNotEmpty) {
+    usuarioNombre = nombreGuardado;
+  }
+
+  runApp(
+    FinanSmartApp(
+      sesionActiva: tieneSesion,
+    ),
+  );
+
+  await syncService.startMonitoring();
+}
 
 // ============================================================
 // APLICACIÓN PRINCIPAL
 // ============================================================
 
 class FinanSmartApp extends StatelessWidget {
+  final bool sesionActiva;
+
   const FinanSmartApp({
     super.key,
+    required this.sesionActiva,
   });
 
   @override
@@ -33,7 +70,11 @@ class FinanSmartApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'FinanSmart',
       theme: AppTheme.light,
-      home: const InicioScreen(),
+
+      // Si existe token seguro, entra directamente al menú.
+      home: sesionActiva
+          ? const MenuPrincipalScreen()
+          : const InicioScreen(),
     );
   }
 }
@@ -251,6 +292,7 @@ class _LoginScreenState
       TextEditingController();
 
   bool ocultarClave = true;
+  bool iniciandoSesion = false;
 
   @override
   void dispose() {
@@ -259,7 +301,7 @@ class _LoginScreenState
     super.dispose();
   }
 
-  void iniciarSesion() {
+  Future<void> iniciarSesion() async {
     final correo =
         correoController.text.trim();
 
@@ -280,17 +322,8 @@ class _LoginScreenState
       return;
     }
 
-    if (correo == usuarioCorreo &&
-        clave == usuarioClave) {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-          builder: (_) =>
-              const MenuPrincipalScreen(),
-        ),
-        (route) => false,
-      );
-    } else {
+    if (correo != usuarioCorreo ||
+        clave != usuarioClave) {
       ScaffoldMessenger.of(context)
           .showSnackBar(
         const SnackBar(
@@ -299,6 +332,64 @@ class _LoginScreenState
           ),
         ),
       );
+
+      return;
+    }
+
+    setState(() {
+      iniciandoSesion = true;
+    });
+
+    try {
+      // En el proyecto real este valor debe provenir
+      // del backend después de autenticar al usuario.
+      //
+      // Para el taller usamos un token de sesión de prueba
+      // almacenado mediante flutter_secure_storage.
+      final token =
+          'finansmart_session_'
+          '${DateTime.now().millisecondsSinceEpoch}';
+
+      await SecureStorageService.saveToken(
+        token,
+      );
+
+      await SecureStorageService.saveUser(
+        id: 'usuario_demo_1',
+        name: usuarioNombre,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const MenuPrincipalScreen(),
+        ),
+        (route) => false,
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No fue posible guardar la sesión.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          iniciandoSesion = false;
+        });
+      }
     }
   }
 
@@ -350,7 +441,9 @@ class _LoginScreenState
                   labelText:
                       'Correo electrónico',
                   prefixIcon:
-                      Icon(Icons.email_outlined),
+                      Icon(
+                    Icons.email_outlined,
+                  ),
                 ),
               ),
 
@@ -400,9 +493,13 @@ class _LoginScreenState
                 width: double.infinity,
                 child: FilledButton(
                   onPressed:
-                      iniciarSesion,
-                  child: const Text(
-                    'Ingresar',
+                      iniciandoSesion
+                          ? null
+                          : iniciarSesion,
+                  child: Text(
+                    iniciandoSesion
+                        ? 'Iniciando...'
+                        : 'Ingresar',
                   ),
                 ),
               ),
@@ -638,10 +735,75 @@ class _RegistroScreenState
 // ============================================================
 
 class MenuPrincipalScreen
-    extends StatelessWidget {
+    extends StatefulWidget {
   const MenuPrincipalScreen({
     super.key,
   });
+
+  @override
+  State<MenuPrincipalScreen> createState() =>
+      _MenuPrincipalScreenState();
+}
+
+class _MenuPrincipalScreenState
+    extends State<MenuPrincipalScreen> {
+  bool cerrandoSesion = false;
+
+  Future<void> cerrarSesion() async {
+    setState(() {
+      cerrandoSesion = true;
+    });
+
+    try {
+      // 1. Elimina el token y los datos seguros.
+      await SecureStorageService.clearSession();
+
+      // 2. Elimina todos los datos locales:
+      // financiamientos + operaciones pendientes.
+      await appDatabase.clearAllData();
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const InicioScreen(),
+        ),
+        (route) => false,
+      );
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sesión cerrada y datos locales eliminados.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No fue posible cerrar la sesión correctamente.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          cerrandoSesion = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -655,19 +817,22 @@ class MenuPrincipalScreen
         actions: [
           IconButton(
             tooltip: 'Cerrar sesión',
-            onPressed: () {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(
-                  builder: (_) =>
-                      const InicioScreen(),
-                ),
-                (route) => false,
-              );
-            },
-            icon: const Icon(
-              Icons.logout,
-            ),
+            onPressed:
+                cerrandoSesion
+                    ? null
+                    : cerrarSesion,
+            icon: cerrandoSesion
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child:
+                        CircularProgressIndicator(
+                      strokeWidth: 2,
+                    ),
+                  )
+                : const Icon(
+                    Icons.logout,
+                  ),
           ),
         ],
       ),
@@ -715,7 +880,8 @@ class MenuPrincipalScreen
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                const NuevaSolicitudScreen(),
+                                const offline_nueva
+                                    .NuevaSolicitudScreen(),
                           ),
                         );
                       },
@@ -731,7 +897,8 @@ class MenuPrincipalScreen
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                const MisSolicitudesScreen(),
+                                const offline_solicitudes
+                                    .MisSolicitudesScreen(),
                           ),
                         );
                       },
@@ -740,7 +907,8 @@ class MenuPrincipalScreen
                     _MenuCard(
                       icon:
                           Icons.calculate_outlined,
-                      label: 'Simulador',
+                      label:
+                          'Simulador',
                       onTap: () {
                         Navigator.push(
                           context,
@@ -771,7 +939,8 @@ class MenuPrincipalScreen
                     _MenuCard(
                       icon:
                           Icons.person_outline,
-                      label: 'Mi perfil',
+                      label:
+                          'Mi perfil',
                       onTap: () {
                         Navigator.push(
                           context,
@@ -956,7 +1125,8 @@ class _SimuladorScreenState
                     const InputDecoration(
                   labelText:
                       'Monto solicitado',
-                  prefixText: '\$ ',
+                  prefixText:
+                      '\$ ',
                 ),
               ),
 
@@ -999,7 +1169,8 @@ class _SimuladorScreenState
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: calcular,
+                  onPressed:
+                      calcular,
                   child: const Text(
                     'Calcular',
                   ),
@@ -1056,262 +1227,6 @@ class _SimuladorScreenState
 }
 
 // ============================================================
-// NUEVA SOLICITUD
-// ============================================================
-
-class NuevaSolicitudScreen
-    extends StatefulWidget {
-  const NuevaSolicitudScreen({
-    super.key,
-  });
-
-  @override
-  State<NuevaSolicitudScreen>
-      createState() =>
-          _NuevaSolicitudScreenState();
-}
-
-class _NuevaSolicitudScreenState
-    extends State<NuevaSolicitudScreen> {
-  final montoController =
-      TextEditingController();
-
-  final plazoController =
-      TextEditingController();
-
-  String tipo =
-      'Microcrédito personal';
-
-  @override
-  void dispose() {
-    montoController.dispose();
-    plazoController.dispose();
-    super.dispose();
-  }
-
-  void enviarSolicitud() {
-    final monto =
-        montoController.text.trim();
-
-    final plazo =
-        plazoController.text.trim();
-
-    if (monto.isEmpty ||
-        plazo.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Complete monto y plazo.',
-          ),
-        ),
-      );
-
-      return;
-    }
-
-    solicitudes.add({
-      'tipo': tipo,
-      'monto': monto,
-      'plazo': plazo,
-      'estado': 'Pendiente',
-    });
-
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Solicitud registrada correctamente.',
-        ),
-      ),
-    );
-
-    Navigator.pop(context);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Nueva solicitud',
-        ),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding:
-              const EdgeInsets.all(24),
-          child: Column(
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: tipo,
-                decoration:
-                    const InputDecoration(
-                  labelText:
-                      'Tipo de financiamiento',
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value:
-                        'Microcrédito personal',
-                    child: Text(
-                      'Microcrédito personal',
-                    ),
-                  ),
-                  DropdownMenuItem(
-                    value:
-                        'Microcrédito emprendedor',
-                    child: Text(
-                      'Microcrédito emprendedor',
-                    ),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() {
-                      tipo = value;
-                    });
-                  }
-                },
-              ),
-
-              const SizedBox(
-                height: 16,
-              ),
-
-              TextField(
-                controller:
-                    montoController,
-                keyboardType:
-                    TextInputType.number,
-                decoration:
-                    const InputDecoration(
-                  labelText:
-                      'Monto solicitado',
-                  prefixText: '\$ ',
-                ),
-              ),
-
-              const SizedBox(
-                height: 16,
-              ),
-
-              TextField(
-                controller:
-                    plazoController,
-                keyboardType:
-                    TextInputType.number,
-                decoration:
-                    const InputDecoration(
-                  labelText:
-                      'Plazo en meses',
-                ),
-              ),
-
-              const SizedBox(
-                height: 24,
-              ),
-
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed:
-                      enviarSolicitud,
-                  child: const Text(
-                    'Enviar solicitud',
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ============================================================
-// MIS SOLICITUDES
-// ============================================================
-
-class MisSolicitudesScreen
-    extends StatefulWidget {
-  const MisSolicitudesScreen({
-    super.key,
-  });
-
-  @override
-  State<MisSolicitudesScreen>
-      createState() =>
-          _MisSolicitudesScreenState();
-}
-
-class _MisSolicitudesScreenState
-    extends State<MisSolicitudesScreen> {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Mis solicitudes',
-        ),
-      ),
-      body: solicitudes.isEmpty
-          ? const Center(
-              child: Text(
-                'Aún no tienes solicitudes.',
-              ),
-            )
-          : ListView.separated(
-              padding:
-                  const EdgeInsets.all(16),
-              itemCount:
-                  solicitudes.length,
-              separatorBuilder:
-                  (context, index) {
-                return const SizedBox(
-                  height: 12,
-                );
-              },
-              itemBuilder:
-                  (context, index) {
-                final solicitud =
-                    solicitudes[index];
-
-                return Card(
-                  child: ListTile(
-                    leading:
-                        const CircleAvatar(
-                      child: Icon(
-                        Icons.description,
-                      ),
-                    ),
-                    title: Text(
-                      solicitud['tipo'],
-                    ),
-                    subtitle: Text(
-                      'Monto: \$${solicitud['monto']}\n'
-                      'Plazo: ${solicitud['plazo']} meses',
-                    ),
-                    trailing: Chip(
-                      avatar:
-                          const Icon(
-                        Icons.schedule,
-                        size: 18,
-                      ),
-                      label: Text(
-                        solicitud['estado'],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-    );
-  }
-}
-
-// ============================================================
 // PERFIL
 // ============================================================
 
@@ -1360,9 +1275,13 @@ class PerfilScreen
                 Icons.person_outline,
               ),
               title:
-                  const Text('Nombre'),
+                  const Text(
+                'Nombre',
+              ),
               subtitle:
-                  Text(usuarioNombre),
+                  Text(
+                usuarioNombre,
+              ),
             ),
 
             ListTile(
@@ -1371,9 +1290,13 @@ class PerfilScreen
                 Icons.email_outlined,
               ),
               title:
-                  const Text('Correo'),
+                  const Text(
+                'Correo',
+              ),
               subtitle:
-                  Text(usuarioCorreo),
+                  Text(
+                usuarioCorreo,
+              ),
             ),
 
             ListTile(
@@ -1382,8 +1305,11 @@ class PerfilScreen
                 Icons.phone_outlined,
               ),
               title:
-                  const Text('Teléfono'),
-              subtitle: Text(
+                  const Text(
+                'Teléfono',
+              ),
+              subtitle:
+                  Text(
                 usuarioTelefono.isEmpty
                     ? 'No registrado'
                     : usuarioTelefono,

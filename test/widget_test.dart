@@ -7,7 +7,9 @@ void main() {
     'FinanSmart inicia correctamente',
     (WidgetTester tester) async {
       await tester.pumpWidget(
-        const FinanSmartApp(),
+        const FinanSmartApp(
+          sesionActiva: false,
+        ),
       );
 
       expect(
