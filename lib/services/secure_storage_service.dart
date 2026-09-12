@@ -1,13 +1,30 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class SecureStorageService {
-  static const FlutterSecureStorage _storage = FlutterSecureStorage();
+  static const FlutterSecureStorage _storage =
+      FlutterSecureStorage();
 
   static const String _accessTokenKey = 'access_token';
+  static const String _refreshTokenKey = 'refresh_token';
   static const String _userIdKey = 'user_id';
   static const String _userNameKey = 'user_name';
+  static const String _userEmailKey = 'user_email';
 
-  /// Guarda el token de acceso de forma cifrada.
+  static Future<void> saveTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await _storage.write(
+      key: _accessTokenKey,
+      value: accessToken,
+    );
+
+    await _storage.write(
+      key: _refreshTokenKey,
+      value: refreshToken,
+    );
+  }
+
   static Future<void> saveToken(String token) async {
     await _storage.write(
       key: _accessTokenKey,
@@ -15,17 +32,22 @@ class SecureStorageService {
     );
   }
 
-  /// Recupera el token almacenado.
   static Future<String?> getToken() async {
     return _storage.read(
       key: _accessTokenKey,
     );
   }
 
-  /// Guarda información mínima del usuario.
+  static Future<String?> getRefreshToken() async {
+    return _storage.read(
+      key: _refreshTokenKey,
+    );
+  }
+
   static Future<void> saveUser({
     required String id,
     required String name,
+    String? email,
   }) async {
     await _storage.write(
       key: _userIdKey,
@@ -36,6 +58,13 @@ class SecureStorageService {
       key: _userNameKey,
       value: name,
     );
+
+    if (email != null) {
+      await _storage.write(
+        key: _userEmailKey,
+        value: email,
+      );
+    }
   }
 
   static Future<String?> getUserId() async {
@@ -50,13 +79,20 @@ class SecureStorageService {
     );
   }
 
-  /// Indica si existe una sesión almacenada.
-  static Future<bool> hasSession() async {
-    final token = await getToken();
-    return token != null && token.isNotEmpty;
+  static Future<String?> getUserEmail() async {
+    return _storage.read(
+      key: _userEmailKey,
+    );
   }
 
-  /// Elimina completamente los datos seguros al cerrar sesión.
+  static Future<bool> hasSession() async {
+    final accessToken = await getToken();
+    final refreshToken = await getRefreshToken();
+
+    return (accessToken != null && accessToken.isNotEmpty) ||
+        (refreshToken != null && refreshToken.isNotEmpty);
+  }
+
   static Future<void> clearSession() async {
     await _storage.deleteAll();
   }

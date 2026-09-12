@@ -6,9 +6,15 @@ import 'screens/mis_solicitudes_screen.dart'
     as offline_solicitudes;
 import 'screens/nueva_solicitud_screen.dart'
     as offline_nueva;
+import 'services/api_client.dart';
+import 'services/api_service.dart';
 import 'services/secure_storage_service.dart';
 import 'services/sync_service.dart';
 import 'theme/app_theme.dart';
+
+// ============================================================
+// BASE DE DATOS ÚNICA DE LA APLICACIÓN
+// ============================================================
 
 final AppDatabase appDatabase = AppDatabase();
 
@@ -17,13 +23,12 @@ final SyncService syncService = SyncService(
 );
 
 // ============================================================
-// DATOS TEMPORALES DEL USUARIO DE PRUEBA
+// DATOS DEL USUARIO
 // ============================================================
 
 String usuarioNombre = 'Usuario FinanSmart';
 String usuarioCorreo = 'usuario@finansmart.com';
 String usuarioTelefono = '0999999999';
-String usuarioClave = '123456';
 
 // ============================================================
 // INICIO DE LA APLICACIÓN
@@ -32,15 +37,27 @@ String usuarioClave = '123456';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Cliente HTTP centralizado de Semana 13.
+  ApiClient.instance.initialize();
+
+  // Recupera la sesión almacenada de forma segura.
   final tieneSesion =
       await SecureStorageService.hasSession();
 
   final nombreGuardado =
       await SecureStorageService.getUserName();
 
+  final correoGuardado =
+      await SecureStorageService.getUserEmail();
+
   if (nombreGuardado != null &&
       nombreGuardado.isNotEmpty) {
     usuarioNombre = nombreGuardado;
+  }
+
+  if (correoGuardado != null &&
+      correoGuardado.isNotEmpty) {
+    usuarioCorreo = correoGuardado;
   }
 
   runApp(
@@ -49,11 +66,12 @@ Future<void> main() async {
     ),
   );
 
+  // Inicia la sincronización de operaciones offline.
   await syncService.startMonitoring();
 }
 
 // ============================================================
-// APLICACIÓN PRINCIPAL
+// APLICACIÓN
 // ============================================================
 
 class FinanSmartApp extends StatelessWidget {
@@ -70,8 +88,6 @@ class FinanSmartApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'FinanSmart',
       theme: AppTheme.light,
-
-      // Si existe token seguro, entra directamente al menú.
       home: sesionActiva
           ? const MenuPrincipalScreen()
           : const InicioScreen(),
@@ -101,7 +117,6 @@ class InicioScreen extends StatelessWidget {
               const SizedBox(
                 height: 32,
               ),
-
               CircleAvatar(
                 radius: 52,
                 backgroundColor:
@@ -113,11 +128,9 @@ class InicioScreen extends StatelessWidget {
                       theme.colorScheme.onPrimary,
                 ),
               ),
-
               const SizedBox(
                 height: 24,
               ),
-
               Text(
                 'FinanSmart',
                 style: theme
@@ -128,22 +141,18 @@ class InicioScreen extends StatelessWidget {
                       theme.colorScheme.primary,
                 ),
               ),
-
               const SizedBox(
                 height: 8,
               ),
-
               Text(
                 'Tu solución inteligente de financiamiento',
                 textAlign: TextAlign.center,
                 style:
                     theme.textTheme.bodyLarge,
               ),
-
               const SizedBox(
                 height: 32,
               ),
-
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
@@ -161,11 +170,9 @@ class InicioScreen extends StatelessWidget {
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 16,
               ),
-
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
@@ -183,11 +190,9 @@ class InicioScreen extends StatelessWidget {
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 8,
               ),
-
               TextButton(
                 onPressed: () {
                   ScaffoldMessenger.of(context)
@@ -204,27 +209,21 @@ class InicioScreen extends StatelessWidget {
                   '¿Olvidaste tu contraseña?',
                 ),
               ),
-
               const SizedBox(
                 height: 32,
               ),
-
               const Divider(),
-
               const SizedBox(
                 height: 24,
               ),
-
               Text(
                 'Catálogo de financiamientos',
                 style:
                     theme.textTheme.titleLarge,
               ),
-
               const SizedBox(
                 height: 8,
               ),
-
               Text(
                 'Consulta los productos disponibles '
                 'directamente desde FinanSmart API.',
@@ -232,11 +231,9 @@ class InicioScreen extends StatelessWidget {
                 style:
                     theme.textTheme.bodyMedium,
               ),
-
               const SizedBox(
                 height: 20,
               ),
-
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
@@ -245,7 +242,10 @@ class InicioScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (_) =>
-                            const FinanciamientosScreen(),
+                            FinanciamientosScreen(
+                          database:
+                              appDatabase,
+                        ),
                       ),
                     );
                   },
@@ -257,7 +257,6 @@ class InicioScreen extends StatelessWidget {
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 24,
               ),
@@ -285,10 +284,10 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState
     extends State<LoginScreen> {
-  final correoController =
+  final TextEditingController correoController =
       TextEditingController();
 
-  final claveController =
+  final TextEditingController claveController =
       TextEditingController();
 
   bool ocultarClave = true;
@@ -322,42 +321,66 @@ class _LoginScreenState
       return;
     }
 
-    if (correo != usuarioCorreo ||
-        clave != usuarioClave) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Correo o contraseña incorrectos.',
-          ),
-        ),
-      );
-
-      return;
-    }
-
     setState(() {
       iniciandoSesion = true;
     });
 
     try {
-      // En el proyecto real este valor debe provenir
-      // del backend después de autenticar al usuario.
-      //
-      // Para el taller usamos un token de sesión de prueba
-      // almacenado mediante flutter_secure_storage.
-      final token =
-          'finansmart_session_'
-          '${DateTime.now().millisecondsSinceEpoch}';
-
-      await SecureStorageService.saveToken(
-        token,
+      final response =
+          await ApiService.login(
+        email: correo,
+        password: clave,
       );
 
-      await SecureStorageService.saveUser(
-        id: 'usuario_demo_1',
-        name: usuarioNombre,
+      final accessToken =
+          response['access_token']
+              ?.toString();
+
+      final refreshToken =
+          response['refresh_token']
+              ?.toString();
+
+      if (accessToken == null ||
+          accessToken.isEmpty ||
+          refreshToken == null ||
+          refreshToken.isEmpty) {
+        throw Exception(
+          'El servidor no devolvió '
+          'las credenciales de sesión.',
+        );
+      }
+
+      await SecureStorageService.saveTokens(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
       );
+
+      final user = response['user'];
+
+      if (user is Map) {
+        final id =
+            user['id']?.toString() ?? '';
+
+        final nombre =
+            user['nombre']?.toString() ??
+                'Usuario FinanSmart';
+
+        final email =
+            user['email']?.toString();
+
+        await SecureStorageService.saveUser(
+          id: id,
+          name: nombre,
+          email: email,
+        );
+
+        usuarioNombre = nombre;
+
+        if (email != null &&
+            email.isNotEmpty) {
+          usuarioCorreo = email;
+        }
+      }
 
       if (!mounted) {
         return;
@@ -371,16 +394,21 @@ class _LoginScreenState
         ),
         (route) => false,
       );
-    } catch (_) {
+    } catch (e) {
       if (!mounted) {
         return;
       }
 
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'No fue posible guardar la sesión.',
+            e
+                .toString()
+                .replaceFirst(
+                  'Exception: ',
+                  '',
+                ),
           ),
         ),
       );
@@ -395,7 +423,8 @@ class _LoginScreenState
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme =
+        Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -415,22 +444,19 @@ class _LoginScreenState
                 color:
                     theme.colorScheme.primary,
               ),
-
               const SizedBox(
                 height: 16,
               ),
-
               Text(
                 'Bienvenido a FinanSmart',
-                textAlign: TextAlign.center,
+                textAlign:
+                    TextAlign.center,
                 style:
                     theme.textTheme.headlineMedium,
               ),
-
               const SizedBox(
                 height: 24,
               ),
-
               TextField(
                 controller:
                     correoController,
@@ -446,11 +472,9 @@ class _LoginScreenState
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 16,
               ),
-
               TextField(
                 controller:
                     claveController,
@@ -466,10 +490,6 @@ class _LoginScreenState
                   ),
                   suffixIcon:
                       IconButton(
-                    tooltip:
-                        ocultarClave
-                            ? 'Mostrar contraseña'
-                            : 'Ocultar contraseña',
                     onPressed: () {
                       setState(() {
                         ocultarClave =
@@ -484,13 +504,12 @@ class _LoginScreenState
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 24,
               ),
-
               SizedBox(
-                width: double.infinity,
+                width:
+                    double.infinity,
                 child: FilledButton(
                   onPressed:
                       iniciandoSesion
@@ -503,27 +522,22 @@ class _LoginScreenState
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 20,
               ),
-
               Text(
-                'Usuario de prueba',
+                'Usuario de prueba Semana 13',
                 style:
                     theme.textTheme.titleMedium,
               ),
-
               const SizedBox(
                 height: 8,
               ),
-
-              Text(
-                usuarioCorreo,
+              const Text(
+                'mariana@finansmart.com',
               ),
-
-              Text(
-                'Contraseña: $usuarioClave',
+              const Text(
+                'Contraseña: 123456',
               ),
             ],
           ),
@@ -537,8 +551,7 @@ class _LoginScreenState
 // REGISTRO
 // ============================================================
 
-class RegistroScreen
-    extends StatefulWidget {
+class RegistroScreen extends StatefulWidget {
   const RegistroScreen({
     super.key,
   });
@@ -550,16 +563,16 @@ class RegistroScreen
 
 class _RegistroScreenState
     extends State<RegistroScreen> {
-  final nombreController =
+  final TextEditingController nombreController =
       TextEditingController();
 
-  final correoController =
+  final TextEditingController correoController =
       TextEditingController();
 
-  final telefonoController =
+  final TextEditingController telefonoController =
       TextEditingController();
 
-  final claveController =
+  final TextEditingController claveController =
       TextEditingController();
 
   @override
@@ -602,7 +615,6 @@ class _RegistroScreenState
     usuarioNombre = nombre;
     usuarioCorreo = correo;
     usuarioTelefono = telefono;
-    usuarioClave = clave;
 
     ScaffoldMessenger.of(context)
         .showSnackBar(
@@ -649,11 +661,9 @@ class _RegistroScreenState
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 16,
               ),
-
               TextField(
                 controller:
                     correoController,
@@ -669,11 +679,9 @@ class _RegistroScreenState
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 16,
               ),
-
               TextField(
                 controller:
                     telefonoController,
@@ -689,11 +697,9 @@ class _RegistroScreenState
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 16,
               ),
-
               TextField(
                 controller:
                     claveController,
@@ -708,15 +714,15 @@ class _RegistroScreenState
                   ),
                 ),
               ),
-
               const SizedBox(
                 height: 24,
               ),
-
               SizedBox(
-                width: double.infinity,
+                width:
+                    double.infinity,
                 child: FilledButton(
-                  onPressed: registrar,
+                  onPressed:
+                      registrar,
                   child: const Text(
                     'Crear cuenta',
                   ),
@@ -734,8 +740,7 @@ class _RegistroScreenState
 // MENÚ PRINCIPAL
 // ============================================================
 
-class MenuPrincipalScreen
-    extends StatefulWidget {
+class MenuPrincipalScreen extends StatefulWidget {
   const MenuPrincipalScreen({
     super.key,
   });
@@ -755,11 +760,8 @@ class _MenuPrincipalScreenState
     });
 
     try {
-      // 1. Elimina el token y los datos seguros.
       await SecureStorageService.clearSession();
 
-      // 2. Elimina todos los datos locales:
-      // financiamientos + operaciones pendientes.
       await appDatabase.clearAllData();
 
       if (!mounted) {
@@ -774,15 +776,6 @@ class _MenuPrincipalScreenState
         ),
         (route) => false,
       );
-
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Sesión cerrada y datos locales eliminados.',
-          ),
-        ),
-      );
     } catch (_) {
       if (!mounted) {
         return;
@@ -792,7 +785,8 @@ class _MenuPrincipalScreenState
           .showSnackBar(
         const SnackBar(
           content: Text(
-            'No fue posible cerrar la sesión correctamente.',
+            'No fue posible cerrar '
+            'la sesión correctamente.',
           ),
         ),
       );
@@ -807,7 +801,8 @@ class _MenuPrincipalScreenState
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme =
+        Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -816,7 +811,8 @@ class _MenuPrincipalScreenState
         ),
         actions: [
           IconButton(
-            tooltip: 'Cerrar sesión',
+            tooltip:
+                'Cerrar sesión',
             onPressed:
                 cerrandoSesion
                     ? null
@@ -849,27 +845,27 @@ class _MenuPrincipalScreenState
                 style:
                     theme.textTheme.headlineMedium,
               ),
-
               const SizedBox(
                 height: 4,
               ),
-
               Text(
                 '¿Qué deseas hacer hoy?',
                 style:
                     theme.textTheme.bodyLarge,
               ),
-
               const SizedBox(
                 height: 20,
               ),
-
               Expanded(
                 child: GridView.count(
                   crossAxisCount: 2,
                   crossAxisSpacing: 14,
                   mainAxisSpacing: 14,
                   children: [
+                    // ============================================
+                    // NUEVA SOLICITUD
+                    // ============================================
+
                     _MenuCard(
                       icon:
                           Icons.add_card,
@@ -880,12 +876,19 @@ class _MenuPrincipalScreenState
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                const offline_nueva
-                                    .NuevaSolicitudScreen(),
+                                offline_nueva
+                                    .NuevaSolicitudScreen(
+                              database:
+                                  appDatabase,
+                            ),
                           ),
                         );
                       },
                     ),
+
+                    // ============================================
+                    // MIS SOLICITUDES
+                    // ============================================
 
                     _MenuCard(
                       icon:
@@ -897,12 +900,19 @@ class _MenuPrincipalScreenState
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                const offline_solicitudes
-                                    .MisSolicitudesScreen(),
+                                offline_solicitudes
+                                    .MisSolicitudesScreen(
+                              database:
+                                  appDatabase,
+                            ),
                           ),
                         );
                       },
                     ),
+
+                    // ============================================
+                    // SIMULADOR
+                    // ============================================
 
                     _MenuCard(
                       icon:
@@ -920,6 +930,10 @@ class _MenuPrincipalScreenState
                       },
                     ),
 
+                    // ============================================
+                    // FINANCIAMIENTOS
+                    // ============================================
+
                     _MenuCard(
                       icon:
                           Icons.account_balance,
@@ -930,11 +944,18 @@ class _MenuPrincipalScreenState
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                const FinanciamientosScreen(),
+                                FinanciamientosScreen(
+                              database:
+                                  appDatabase,
+                            ),
                           ),
                         );
                       },
                     ),
+
+                    // ============================================
+                    // MI PERFIL
+                    // ============================================
 
                     _MenuCard(
                       icon:
@@ -962,6 +983,10 @@ class _MenuPrincipalScreenState
   }
 }
 
+// ============================================================
+// TARJETA DEL MENÚ
+// ============================================================
+
 class _MenuCard extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -975,7 +1000,8 @@ class _MenuCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme =
+        Theme.of(context);
 
     return Semantics(
       button: true,
@@ -995,11 +1021,9 @@ class _MenuCard extends StatelessWidget {
                 color:
                     theme.colorScheme.primary,
               ),
-
               const SizedBox(
                 height: 12,
               ),
-
               Padding(
                 padding:
                     const EdgeInsets.symmetric(
@@ -1025,27 +1049,25 @@ class _MenuCard extends StatelessWidget {
 // SIMULADOR
 // ============================================================
 
-class SimuladorScreen
-    extends StatefulWidget {
+class SimuladorScreen extends StatefulWidget {
   const SimuladorScreen({
     super.key,
   });
 
   @override
-  State<SimuladorScreen>
-      createState() =>
-          _SimuladorScreenState();
+  State<SimuladorScreen> createState() =>
+      _SimuladorScreenState();
 }
 
 class _SimuladorScreenState
     extends State<SimuladorScreen> {
-  final montoController =
+  final TextEditingController montoController =
       TextEditingController();
 
-  final plazoController =
+  final TextEditingController plazoController =
       TextEditingController();
 
-  final tasaController =
+  final TextEditingController tasaController =
       TextEditingController(
     text: '12.5',
   );
@@ -1061,15 +1083,18 @@ class _SimuladorScreenState
   }
 
   void calcular() {
-    final monto = double.tryParse(
+    final monto =
+        double.tryParse(
       montoController.text,
     );
 
-    final plazo = int.tryParse(
+    final plazo =
+        int.tryParse(
       plazoController.text,
     );
 
-    final tasa = double.tryParse(
+    final tasa =
+        double.tryParse(
       tasaController.text,
     );
 
@@ -1096,13 +1121,15 @@ class _SimuladorScreenState
         monto + interes;
 
     setState(() {
-      cuota = total / plazo;
+      cuota =
+          total / plazo;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme =
+        Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -1129,11 +1156,9 @@ class _SimuladorScreenState
                       '\$ ',
                 ),
               ),
-
               const SizedBox(
                 height: 16,
               ),
-
               TextField(
                 controller:
                     plazoController,
@@ -1145,11 +1170,9 @@ class _SimuladorScreenState
                       'Plazo en meses',
                 ),
               ),
-
               const SizedBox(
                 height: 16,
               ),
-
               TextField(
                 controller:
                     tasaController,
@@ -1161,13 +1184,12 @@ class _SimuladorScreenState
                       'Tasa de interés %',
                 ),
               ),
-
               const SizedBox(
                 height: 24,
               ),
-
               SizedBox(
-                width: double.infinity,
+                width:
+                    double.infinity,
                 child: FilledButton(
                   onPressed:
                       calcular,
@@ -1176,12 +1198,10 @@ class _SimuladorScreenState
                   ),
                 ),
               ),
-
               if (cuota != null) ...[
                 const SizedBox(
                   height: 24,
                 ),
-
                 Card(
                   child: Padding(
                     padding:
@@ -1196,21 +1216,18 @@ class _SimuladorScreenState
                               .textTheme
                               .titleMedium,
                         ),
-
                         const SizedBox(
                           height: 8,
                         ),
-
                         Text(
                           '\$${cuota!.toStringAsFixed(2)}',
                           style: theme
                               .textTheme
                               .headlineLarge
                               ?.copyWith(
-                            color:
-                                theme
-                                    .colorScheme
-                                    .primary,
+                            color: theme
+                                .colorScheme
+                                .primary,
                           ),
                         ),
                       ],
@@ -1230,15 +1247,15 @@ class _SimuladorScreenState
 // PERFIL
 // ============================================================
 
-class PerfilScreen
-    extends StatelessWidget {
+class PerfilScreen extends StatelessWidget {
   const PerfilScreen({
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme =
+        Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -1264,11 +1281,9 @@ class PerfilScreen
                 ),
               ),
             ),
-
             const SizedBox(
               height: 24,
             ),
-
             ListTile(
               leading:
                   const Icon(
@@ -1283,7 +1298,6 @@ class PerfilScreen
                 usuarioNombre,
               ),
             ),
-
             ListTile(
               leading:
                   const Icon(
@@ -1298,7 +1312,6 @@ class PerfilScreen
                 usuarioCorreo,
               ),
             ),
-
             ListTile(
               leading:
                   const Icon(

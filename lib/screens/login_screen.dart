@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../services/api_service.dart';
+import '../services/secure_storage_service.dart';
 import 'home_screen.dart';
 import 'register_screen.dart';
 
@@ -6,49 +9,162 @@ class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  State<LoginScreen> createState() =>
+      _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
-  final TextEditingController correoController = TextEditingController();
-  final TextEditingController claveController = TextEditingController();
+class _LoginScreenState
+    extends State<LoginScreen> {
+  final TextEditingController
+      correoController =
+      TextEditingController();
+
+  final TextEditingController
+      claveController =
+      TextEditingController();
 
   bool ocultarClave = true;
+  bool cargando = false;
 
-  void iniciarSesion() {
-    if (correoController.text.isEmpty || claveController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+  Future<void> iniciarSesion() async {
+    final correo =
+        correoController.text.trim();
+
+    final clave =
+        claveController.text.trim();
+
+    if (correo.isEmpty ||
+        clave.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          content: Text('Ingrese correo y contraseña'),
+          content: Text(
+            'Ingrese correo y contraseña',
+          ),
         ),
       );
+
       return;
     }
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const HomeScreen(),
-      ),
-    );
+    setState(() {
+      cargando = true;
+    });
+
+    try {
+      final response =
+          await ApiService.login(
+        email: correo,
+        password: clave,
+      );
+
+      final accessToken =
+          response['access_token']
+              ?.toString();
+
+      final refreshToken =
+          response['refresh_token']
+              ?.toString();
+
+      if (accessToken == null ||
+          refreshToken == null) {
+        throw Exception(
+          'El servidor no devolvió '
+          'los tokens de sesión.',
+        );
+      }
+
+      await SecureStorageService
+          .saveTokens(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      );
+
+      final user = response['user'];
+
+      if (user is Map) {
+        await SecureStorageService
+            .saveUser(
+          id:
+              user['id']?.toString() ??
+                  '',
+          name:
+              user['nombre']
+                      ?.toString() ??
+                  '',
+          email:
+              user['email']
+                  ?.toString(),
+        );
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const HomeScreen(),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          content: Text(
+            e
+                .toString()
+                .replaceFirst(
+                  'Exception: ',
+                  '',
+                ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          cargando = false;
+        });
+      }
+    }
   }
 
   @override
-  Widget build(BuildContext context) {
+  void dispose() {
+    correoController.dispose();
+    claveController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F9FC),
+      backgroundColor:
+          const Color(0xFFF7F9FC),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding:
+              const EdgeInsets.all(24),
           child: Column(
             children: [
               const SizedBox(height: 35),
 
               const CircleAvatar(
                 radius: 52,
-                backgroundColor: Color(0xFF1746A2),
+                backgroundColor:
+                    Color(0xFF1746A2),
                 child: Icon(
-                  Icons.account_balance_wallet,
+                  Icons
+                      .account_balance_wallet,
                   size: 55,
                   color: Colors.white,
                 ),
@@ -60,8 +176,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 'FinanSmart',
                 style: TextStyle(
                   fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1746A2),
+                  fontWeight:
+                      FontWeight.bold,
+                  color:
+                      Color(0xFF1746A2),
                 ),
               ),
 
@@ -71,40 +189,61 @@ class _LoginScreenState extends State<LoginScreen> {
                 'Iniciar sesión',
                 style: TextStyle(
                   fontSize: 20,
-                  fontWeight: FontWeight.w600,
+                  fontWeight:
+                      FontWeight.w600,
                 ),
               ),
 
               const SizedBox(height: 30),
 
               TextField(
-                controller: correoController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Correo electrónico',
-                  prefixIcon: Icon(Icons.email_outlined),
-                  border: OutlineInputBorder(),
+                controller:
+                    correoController,
+                keyboardType:
+                    TextInputType
+                        .emailAddress,
+                decoration:
+                    const InputDecoration(
+                  labelText:
+                      'Correo electrónico',
+                  prefixIcon: Icon(
+                    Icons.email_outlined,
+                  ),
+                  border:
+                      OutlineInputBorder(),
                 ),
               ),
 
               const SizedBox(height: 18),
 
               TextField(
-                controller: claveController,
-                obscureText: ocultarClave,
-                decoration: InputDecoration(
-                  labelText: 'Contraseña',
-                  prefixIcon: const Icon(Icons.lock_outline),
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
+                controller:
+                    claveController,
+                obscureText:
+                    ocultarClave,
+                decoration:
+                    InputDecoration(
+                  labelText:
+                      'Contraseña',
+                  prefixIcon:
+                      const Icon(
+                    Icons.lock_outline,
+                  ),
+                  border:
+                      const OutlineInputBorder(),
+                  suffixIcon:
+                      IconButton(
                     icon: Icon(
                       ocultarClave
-                          ? Icons.visibility_off
-                          : Icons.visibility,
+                          ? Icons
+                              .visibility_off
+                          : Icons
+                              .visibility,
                     ),
                     onPressed: () {
                       setState(() {
-                        ocultarClave = !ocultarClave;
+                        ocultarClave =
+                            !ocultarClave;
                       });
                     },
                   ),
@@ -117,11 +256,26 @@ class _LoginScreenState extends State<LoginScreen> {
                 width: double.infinity,
                 height: 52,
                 child: FilledButton(
-                  onPressed: iniciarSesion,
-                  child: const Text(
-                    'Ingresar',
-                    style: TextStyle(fontSize: 17),
-                  ),
+                  onPressed: cargando
+                      ? null
+                      : iniciarSesion,
+                  child: cargando
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child:
+                              CircularProgressIndicator(
+                            strokeWidth:
+                                2,
+                          ),
+                        )
+                      : const Text(
+                          'Ingresar',
+                          style:
+                              TextStyle(
+                            fontSize: 17,
+                          ),
+                        ),
                 ),
               ),
 
@@ -137,19 +291,26 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 20),
 
               Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisAlignment:
+                    MainAxisAlignment
+                        .center,
                 children: [
-                  const Text('¿No tienes cuenta?'),
+                  const Text(
+                    '¿No tienes cuenta?',
+                  ),
                   TextButton(
                     onPressed: () {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const RegisterScreen(),
+                          builder: (_) =>
+                              const RegisterScreen(),
                         ),
                       );
                     },
-                    child: const Text('Registrarse'),
+                    child: const Text(
+                      'Registrarse',
+                    ),
                   ),
                 ],
               ),

@@ -2,24 +2,19 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:dio/dio.dart';
 import 'package:drift/drift.dart';
-import 'package:http/http.dart' as http;
 
 import '../database/app_database.dart';
+import 'api_service.dart';
 
 /// Procesa y sincroniza las operaciones creadas
 /// mientras FinanSmart se encuentra sin conexión.
 class SyncService {
-  static const String _defaultBaseUrl =
-      String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:3000',
-  );
-
   final AppDatabase database;
-  final String baseUrl;
 
-  final Connectivity _connectivity = Connectivity();
+  final Connectivity _connectivity =
+      Connectivity();
 
   StreamSubscription<List<ConnectivityResult>>?
       _connectivitySubscription;
@@ -28,34 +23,44 @@ class SyncService {
 
   SyncService({
     required this.database,
-    this.baseUrl = _defaultBaseUrl,
   });
 
-  /// Comienza a observar los cambios de conectividad.
+  // ============================================================
+  // MONITOREO DE CONECTIVIDAD
+  // ============================================================
+
   Future<void> startMonitoring() async {
-    await _connectivitySubscription?.cancel();
+    await _connectivitySubscription
+        ?.cancel();
 
     _connectivitySubscription =
-        _connectivity.onConnectivityChanged.listen(
+        _connectivity
+            .onConnectivityChanged
+            .listen(
       (results) async {
-        if (_hasConnection(results)) {
+        if (_hasConnection(
+          results,
+        )) {
           await processPendingOperations();
         }
       },
     );
 
-    // También comprueba la conexión al iniciar.
     final currentResults =
-        await _connectivity.checkConnectivity();
+        await _connectivity
+            .checkConnectivity();
 
-    if (_hasConnection(currentResults)) {
+    if (_hasConnection(
+      currentResults,
+    )) {
       await processPendingOperations();
     }
   }
 
-  /// Detiene el observador de conectividad.
   Future<void> stopMonitoring() async {
-    await _connectivitySubscription?.cancel();
+    await _connectivitySubscription
+        ?.cancel();
+
     _connectivitySubscription = null;
   }
 
@@ -63,14 +68,18 @@ class SyncService {
     List<ConnectivityResult> results,
   ) {
     return results.any(
-      (result) => result != ConnectivityResult.none,
+      (result) =>
+          result !=
+          ConnectivityResult.none,
     );
   }
 
-  /// Procesa las operaciones todavía pendientes.
-  ///
-  /// Cada una admite como máximo tres intentos.
-  Future<void> processPendingOperations() async {
+  // ============================================================
+  // PROCESAR COLA OFFLINE
+  // ============================================================
+
+  Future<void>
+      processPendingOperations() async {
     if (_processing) {
       return;
     }
@@ -78,16 +87,23 @@ class SyncService {
     _processing = true;
 
     try {
-      final operations = await database
-          .select(database.pendingOperations)
-          .get();
+      final operations =
+          await database
+              .select(
+                database
+                    .pendingOperations,
+              )
+              .get();
 
-      for (final operation in operations) {
-        if (operation.syncStatus == 'synced') {
+      for (final operation
+          in operations) {
+        if (operation.syncStatus ==
+            'synced') {
           continue;
         }
 
-        if (operation.syncStatus == 'failed') {
+        if (operation.syncStatus ==
+            'failed') {
           continue;
         }
 
@@ -95,69 +111,213 @@ class SyncService {
           continue;
         }
 
-        await _sendOperation(operation);
+        await _sendOperation(
+          operation,
+        );
       }
     } finally {
       _processing = false;
     }
   }
 
+  // ============================================================
+  // ENVIAR OPERACIÓN
+  // ============================================================
+
   Future<void> _sendOperation(
     PendingOperation operation,
   ) async {
     try {
-      // Espera creciente:
-      // intento 0 -> inmediato
-      // intento 1 -> 2 segundos
-      // intento 2 -> 4 segundos
+      /*
+        Espera creciente:
+
+        intento 0 -> inmediato
+        intento 1 -> 2 segundos
+        intento 2 -> 4 segundos
+      */
       if (operation.retryCount > 0) {
         final seconds =
             1 << operation.retryCount;
 
         await Future.delayed(
-          Duration(seconds: seconds),
+          Duration(
+            seconds: seconds,
+          ),
         );
       }
 
-      late http.Response response;
-
-      switch (operation.operationType) {
+      switch (
+          operation.operationType) {
         case 'create_request':
-          response = await http
-              .post(
-                Uri.parse(
-                  '$baseUrl/api/solicitudes',
-                ),
-                headers: {
-                  'Content-Type':
-                      'application/json',
-                  'Accept':
-                      'application/json',
-                },
-                body: operation.payload,
-              )
-              .timeout(
-                const Duration(seconds: 8),
-              );
+          await _sendCreateRequest(
+            operation,
+          );
           break;
 
         default:
-          await _markAsFailed(operation);
+          await _markAsFailed(
+            operation,
+          );
           return;
       }
+    } on ValidationException {
+      /*
+        Si el backend devuelve 422,
+        no tiene sentido repetir la
+        misma operación automáticamente.
 
-      if (response.statusCode >= 200 &&
-          response.statusCode < 300) {
-        await _markAsSynced(operation);
-      } else {
-        await _increaseRetry(operation);
+        Se marca como fallida porque
+        requiere corrección de datos.
+      */
+      await _markAsFailed(
+        operation,
+      );
+    } on DioException catch (error) {
+      if (_isRetryableNetworkError(
+        error,
+      )) {
+        await _increaseRetry(
+          operation,
+        );
+
+        return;
       }
+
+      /*
+        Un 401 normalmente será gestionado
+        automáticamente por ApiClient.
+
+        Si aun así llega hasta aquí,
+        no se reintenta indefinidamente.
+      */
+      if (error.response?.statusCode ==
+          401) {
+        await _increaseRetry(
+          operation,
+        );
+
+        return;
+      }
+
+      /*
+        Los errores del servidor
+        pueden ser temporales.
+      */
+      final statusCode =
+          error.response
+              ?.statusCode;
+
+      if (statusCode != null &&
+          statusCode >= 500) {
+        await _increaseRetry(
+          operation,
+        );
+
+        return;
+      }
+
+      await _markAsFailed(
+        operation,
+      );
     } catch (_) {
-      await _increaseRetry(operation);
+      await _increaseRetry(
+        operation,
+      );
     }
   }
 
-  /// Marca la operación como enviada correctamente.
+  // ============================================================
+  // CREAR SOLICITUD
+  // ============================================================
+
+  Future<void> _sendCreateRequest(
+    PendingOperation operation,
+  ) async {
+    final payload =
+        decodePayload(
+      operation.payload,
+    );
+
+    final clientId =
+        payload['client_id']
+            ?.toString();
+
+    final financiamientoId =
+        _toInt(
+      payload[
+          'financiamiento_id'],
+    );
+
+    final monto =
+        _toDouble(
+      payload['monto'],
+    );
+
+    final plazoMeses =
+        _toInt(
+      payload['plazo_meses'],
+    );
+
+    if (clientId == null ||
+        clientId.isEmpty) {
+      await _markAsFailed(
+        operation,
+      );
+
+      return;
+    }
+
+    /*
+      Se utiliza ApiService en lugar
+      de http.post.
+
+      De esta forma:
+      - se agrega Authorization;
+      - se renueva el token ante 401;
+      - se reutiliza el cliente Dio
+        centralizado;
+      - se mantiene la misma API que
+        usa la aplicación online.
+    */
+    await ApiService.crearSolicitud(
+      clientId: clientId,
+      financiamientoId:
+          financiamientoId,
+      monto: monto,
+      plazoMeses:
+          plazoMeses,
+    );
+
+    await _markAsSynced(
+      operation,
+    );
+  }
+
+  // ============================================================
+  // ERRORES QUE PUEDEN REINTENTARSE
+  // ============================================================
+
+  bool _isRetryableNetworkError(
+    DioException error,
+  ) {
+    return error.type ==
+            DioExceptionType
+                .connectionError ||
+        error.type ==
+            DioExceptionType
+                .connectionTimeout ||
+        error.type ==
+            DioExceptionType
+                .sendTimeout ||
+        error.type ==
+            DioExceptionType
+                .receiveTimeout;
+  }
+
+  // ============================================================
+  // MARCAR COMO SINCRONIZADA
+  // ============================================================
+
   Future<void> _markAsSynced(
     PendingOperation operation,
   ) async {
@@ -165,17 +325,22 @@ class SyncService {
       database.pendingOperations,
     )..where(
         (table) =>
-            table.id.equals(operation.id),
+            table.id.equals(
+              operation.id,
+            ),
       ))
         .write(
       const PendingOperationsCompanion(
-        syncStatus: Value('synced'),
+        syncStatus:
+            Value('synced'),
       ),
     );
   }
 
-  /// Incrementa los intentos y marca como error
-  /// cuando alcanza el máximo permitido.
+  // ============================================================
+  // INCREMENTAR REINTENTO
+  // ============================================================
+
   Future<void> _increaseRetry(
     PendingOperation operation,
   ) async {
@@ -186,12 +351,18 @@ class SyncService {
       database.pendingOperations,
     )..where(
         (table) =>
-            table.id.equals(operation.id),
+            table.id.equals(
+              operation.id,
+            ),
       ))
         .write(
       PendingOperationsCompanion(
-        retryCount: Value(newRetryCount),
-        syncStatus: Value(
+        retryCount:
+            Value(
+          newRetryCount,
+        ),
+        syncStatus:
+            Value(
           newRetryCount >= 3
               ? 'failed'
               : 'pending',
@@ -200,6 +371,10 @@ class SyncService {
     );
   }
 
+  // ============================================================
+  // MARCAR COMO FALLIDA
+  // ============================================================
+
   Future<void> _markAsFailed(
     PendingOperation operation,
   ) async {
@@ -207,28 +382,76 @@ class SyncService {
       database.pendingOperations,
     )..where(
         (table) =>
-            table.id.equals(operation.id),
+            table.id.equals(
+              operation.id,
+            ),
       ))
         .write(
       const PendingOperationsCompanion(
-        syncStatus: Value('failed'),
+        syncStatus:
+            Value('failed'),
       ),
     );
   }
 
-  /// Convierte los datos a JSON para almacenarlos
-  /// en la cola local.
+  // ============================================================
+  // JSON PARA LA OUTBOX
+  // ============================================================
+
   static String encodePayload(
     Map<String, dynamic> data,
   ) {
-    return jsonEncode(data);
+    return jsonEncode(
+      data,
+    );
   }
 
-  static Map<String, dynamic> decodePayload(
+  static Map<String, dynamic>
+      decodePayload(
     String payload,
   ) {
     return Map<String, dynamic>.from(
-      jsonDecode(payload),
+      jsonDecode(
+        payload,
+      ),
     );
+  }
+
+  // ============================================================
+  // CONVERSIONES
+  // ============================================================
+
+  int _toInt(
+    dynamic value,
+  ) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is double) {
+      return value.toInt();
+    }
+
+    return int.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        0;
+  }
+
+  double _toDouble(
+    dynamic value,
+  ) {
+    if (value is double) {
+      return value;
+    }
+
+    if (value is int) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        0;
   }
 }

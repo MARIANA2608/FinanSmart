@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../main.dart' show appDatabase;
 import 'financiamientos_screen.dart';
-import 'nueva_solicitud_screen.dart';
 import 'mis_solicitudes_screen.dart';
+import 'nueva_solicitud_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
@@ -18,72 +19,132 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
       body: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(
+          20,
+        ),
         child: GridView.count(
           crossAxisCount: 2,
           crossAxisSpacing: 15,
           mainAxisSpacing: 15,
           children: [
+            // ==================================================
+            // NUEVA SOLICITUD
+            // ==================================================
+
             _opcion(
               context: context,
               icono:
                   Icons.request_page_outlined,
-              texto: 'Nueva solicitud',
+              texto:
+                  'Nueva solicitud',
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) =>
-                        const NuevaSolicitudScreen(),
+                        NuevaSolicitudScreen(
+                      database:
+                          appDatabase,
+                    ),
                   ),
                 );
               },
             ),
 
+            // ==================================================
+            // MIS SOLICITUDES
+            // ==================================================
+
             _opcion(
               context: context,
-              icono: Icons.list_alt,
-              texto: 'Mis solicitudes',
+              icono:
+                  Icons.list_alt,
+              texto:
+                  'Mis solicitudes',
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) =>
-                        const MisSolicitudesScreen(),
+                        MisSolicitudesScreen(
+                      database:
+                          appDatabase,
+                    ),
                   ),
                 );
               },
             ),
+
+            // ==================================================
+            // SIMULADOR
+            // ==================================================
 
             _opcion(
               context: context,
               icono:
                   Icons.calculate_outlined,
-              texto: 'Simulador',
-              onTap: () {},
-            ),
-
-            _opcion(
-              context: context,
-              icono:
-                  Icons.account_balance_outlined,
-              texto: 'Financiamientos',
+              texto:
+                  'Simulador',
               onTap: () {
-                Navigator.push(
+                ScaffoldMessenger.of(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        const FinanciamientosScreen(),
+                ).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'El simulador está disponible '
+                      'desde el menú principal.',
+                    ),
                   ),
                 );
               },
             ),
 
+            // ==================================================
+            // FINANCIAMIENTOS
+            // ==================================================
+
             _opcion(
               context: context,
-              icono: Icons.person_outline,
-              texto: 'Mi perfil',
-              onTap: () {},
+              icono:
+                  Icons.account_balance_outlined,
+              texto:
+                  'Financiamientos',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        FinanciamientosScreen(
+                      database:
+                          appDatabase,
+                    ),
+                  ),
+                );
+              },
+            ),
+
+            // ==================================================
+            // MI PERFIL
+            // ==================================================
+
+            _opcion(
+              context: context,
+              icono:
+                  Icons.person_outline,
+              texto:
+                  'Mi perfil',
+              onTap: () {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'El perfil está disponible '
+                      'desde el menú principal.',
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -91,20 +152,28 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  // ============================================================
+  // TARJETA DE OPCIÓN
+  // ============================================================
+
   Widget _opcion({
     required BuildContext context,
     required IconData icono,
     required String texto,
     required VoidCallback onTap,
   }) {
-    final theme = Theme.of(context);
+    final theme =
+        Theme.of(context);
 
     return Card(
       elevation: 2,
       child: InkWell(
-        onTap: onTap,
+        onTap:
+            onTap,
         borderRadius:
-            BorderRadius.circular(12),
+            BorderRadius.circular(
+          12,
+        ),
         child: Column(
           mainAxisAlignment:
               MainAxisAlignment.center,
