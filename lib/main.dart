@@ -10,6 +10,7 @@ import 'services/api_client.dart';
 import 'services/api_service.dart';
 import 'services/secure_storage_service.dart';
 import 'services/sync_service.dart';
+import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
 
 // ============================================================
@@ -36,6 +37,7 @@ String usuarioTelefono = '0999999999';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialize();
 
   // Cliente HTTP centralizado de Semana 13.
   ApiClient.instance.initialize();
