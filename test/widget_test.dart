@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:finansmart/main.dart';
 
 void main() {
@@ -11,6 +10,8 @@ void main() {
           sesionActiva: false,
         ),
       );
+
+      await tester.pump();
 
       expect(
         find.text('FinanSmart'),
