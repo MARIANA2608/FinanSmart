@@ -3,7 +3,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
@@ -522,6 +522,7 @@ app.get(
 */
 app.listen(
   PORT,
+  '0.0.0.0',
   () => {
     console.log(
       '==========================================='
@@ -532,28 +533,20 @@ app.listen(
     );
 
     console.log(
-      `Servidor: http://localhost:${PORT}`
-    );
+  `FinanSmart API ejecutándose en el puerto ${PORT}`
+);
 
     console.log(
       '==========================================='
     );
 
-    console.log(
-      'Usuario Semana 13:'
-    );
+   console.log(
+  'Modo de demostración activo.'
+);
 
-    console.log(
-      'mariana@finansmart.com'
-    );
-
-    console.log(
-      'Contraseña: 123456'
-    );
-
-    console.log(
-      'Access token: 90 segundos'
-    );
+console.log(
+  'Access token: 90 segundos'
+);
 
     console.log(
       '==========================================='

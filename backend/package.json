@@ -1,13 +1,18 @@
 {
   "name": "finansmart-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Backend de la aplicación móvil FinanSmart",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "finansmart",
+    "backend",
+    "api",
+    "express"
+  ],
+  "author": "Mariana Angélica Casco Guerrero",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
