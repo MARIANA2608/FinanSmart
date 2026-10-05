@@ -58,6 +58,57 @@ class ApiService {
       _messageFromResponse(response),
     );
   }
+    // ============================================================
+  // REGISTRO DE USUARIO
+  // ============================================================
+
+  static Future<Map<String, dynamic>> registrarUsuario({
+    required String nombre,
+    required String email,
+    required String telefono,
+    required String password,
+  }) async {
+    final response = await _dio.post(
+      '/api/auth/register',
+      data: {
+        'nombre': nombre,
+        'email': email,
+        'telefono': telefono,
+        'password': password,
+      },
+    );
+
+    if (response.statusCode == 200 ||
+        response.statusCode == 201) {
+      return Map<String, dynamic>.from(
+        response.data as Map,
+      );
+    }
+
+    if (response.statusCode == 422) {
+      final body =
+          Map<String, dynamic>.from(
+        response.data as Map,
+      );
+
+      final errors = body['errors'];
+
+      if (errors is Map) {
+        throw ValidationException(
+          Map<String, dynamic>.from(errors).map(
+            (key, value) => MapEntry(
+              key,
+              value.toString(),
+            ),
+          ),
+        );
+      }
+    }
+
+    throw Exception(
+      _messageFromResponse(response),
+    );
+  }
 
   // ============================================================
   // CREAR SOLICITUD
